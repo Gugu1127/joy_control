@@ -1,0 +1,21 @@
+<launch>
+  <machine name="ros" user="ros" password="gugu1127" address="192.168.0.112" env-loader="~/env.sh" default="never" />
+  <!-- Turtlesim Node-->
+
+  <!-- joy node -->
+  <node respawn="true" pkg="joy" type="joy_node" name="joy_sensor">
+    <param name="dev" type="string" value="/dev/input/js2" />
+    <param name="deadzone" value="0.12" />
+    <param name="default_trig_val" value="true" />
+    <param name="autorepeat_rate" value="1000" />
+  </node>
+
+  <!-- Axes -->
+  <node pkg="joy_control" type="joy_twist" name="joy_control_node"/>
+
+
+  <node name="image_view" pkg="image_view" type="image_view" respawn="false" output="screen">
+    <remap from="image" to="/usb_cam/image_raw"/>
+    <param name="autosize" value="true" />
+  </node>
+</launch>
