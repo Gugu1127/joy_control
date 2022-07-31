@@ -2,8 +2,11 @@
 #include <ros/console.h>
 #include <ros/ros.h>
 #include <sensor_msgs/Joy.h>
+#include <std_msgs/String.h>
 
+#include <thread>
 #include <vector>
+#include <string>
 
 using namespace std;
 
@@ -82,7 +85,6 @@ class Car_control {
         bool R_bottom_state = argument.trigger_R_bottom.isActive(RB);
         bool B_bottom_state = argument.trigger_B_bottom.isActive(B);
         if (L_bottom_state) {
-            ROS_INFO("LLL");
             if (argument.marco_REC)
                 argument.marco_REC = false;
             else
@@ -90,18 +92,15 @@ class Car_control {
         }
 
         if (R_bottom_state) {
-            ROS_INFO("RRR");
             argument.record.clear();
         }
 
         if (B_bottom_state) {
-            ROS_INFO("BBB");
             argument.back = true;
         }
 
         if (argument.back) {
             if (argument.record.size() > 0) {
-                ROS_INFO("size = %d", argument.record.size());
                 int index = argument.record.size() - 1;
                 twist.linear.x = argument.record[index].first;
                 twist.angular.z = argument.record[index].second;
@@ -109,7 +108,6 @@ class Car_control {
                 return twist;
             } else {
                 argument.back = false;
-                ROS_INFO("end");
             }
         } else {
             if (abs(twist.linear.x) > 0.01 || abs(twist.angular.z) > 0.1)
@@ -129,6 +127,8 @@ class Joy_rosky {
 
     int L_bottom, R_bottom, B;
 
+    string ifCollision;
+
    public:
     Joy_rosky() {
         ros::NodeHandle nodePtr;
@@ -145,16 +145,28 @@ class Joy_rosky {
 
         // subscribe to the joystick topic for the input to drive the turtle
         subscriber = nodePtr.subscribe<sensor_msgs::Joy>("joy", 1, &Joy_rosky::joyCallback, this);
+
+        subscriber_collision = nodePtr.subscribe("/collision", 1, &Joy_rosky::collisionCallback, this);
     }
 
    private:
     void joyCallback(const sensor_msgs::Joy::ConstPtr& joy) {
         Car_control controller;
-        publisher.publish(controller.control(publisher, joy->axes[axis_index], (-joy->axes[RT_index] + 1) / 2, (-joy->axes[LT_index] + 1) / 2, joy->buttons[LB_index], joy->buttons[RB_index], joy->buttons[L_bottom], joy->buttons[R_bottom], joy->buttons[B]));
+        geometry_msgs::Twist twist = move(controller.control(publisher, joy->axes[axis_index], (-joy->axes[RT_index] + 1) / 2, (-joy->axes[LT_index] + 1) / 2, joy->buttons[LB_index], joy->buttons[RB_index], joy->buttons[L_bottom], joy->buttons[R_bottom], joy->buttons[B]));
+        if (ifCollision == "true" && twist.linear.x > 0) {
+            twist.linear.x = 0;
+        }
+
+        publisher.publish(twist);
+    }
+
+    void collisionCallback(const std_msgs::String& msg) {
+        ifCollision = msg.data;
     }
 
     ros::Publisher publisher;
     ros::Subscriber subscriber;
+    ros::Subscriber subscriber_collision;
 };
 
 int main(int argc, char** argv) {
