@@ -2,13 +2,22 @@
 #include <ros/console.h>
 #include <ros/ros.h>
 #include <sensor_msgs/Joy.h>
-#include <std_msgs/String.h>
+#include <std_msgs/Int16MultiArray.h>
 
 #include <thread>
 #include <vector>
 #include <string>
 
 using namespace std;
+
+enum Position {
+    top,
+    top_R,
+    top_L,
+    bottom,
+    bottom_R,
+    bottom_L
+};
 
 class Trigger {
    private:
@@ -153,15 +162,42 @@ class Joy_rosky {
     void joyCallback(const sensor_msgs::Joy::ConstPtr& joy) {
         Car_control controller;
         geometry_msgs::Twist twist = move(controller.control(publisher, joy->axes[axis_index], (-joy->axes[RT_index] + 1) / 2, (-joy->axes[LT_index] + 1) / 2, joy->buttons[LB_index], joy->buttons[RB_index], joy->buttons[L_bottom], joy->buttons[R_bottom], joy->buttons[B]));
-        if (ifCollision == "true" && twist.linear.x > 0) {
-            twist.linear.x = 0;
+        if (twist.linear.x > 0) {
+            if (collisionState[top] == 0) {
+                twist.linear.x = 0;
+            } else if (collisionState[top] == 2 && twist.linear.x > 0.05) {
+                twist.linear.x = 0.05;
+            }
+            
+        }
+        else{
+            if (collisionState[bottom] == 0) {
+                twist.linear.x = 0;
+            } else if (collisionState[bottom] == 2 && twist.linear.x < -0.05) {
+                twist.linear.x = -0.05;
+            }
+        }
+
+        if (twist.angular.z < 0) {
+            if (collisionState[top_R] == 0 || collisionState[bottom_L] == 0) {
+                if(twist.angular.z = 0);
+            } 
+        }
+        else{
+            if (collisionState[top_L] == 0 || collisionState[bottom_R] == 0) {
+                twist.angular.z = 0;
+            } 
         }
 
         publisher.publish(twist);
     }
 
-    void collisionCallback(const std_msgs::String& msg) {
-        ifCollision = msg.data;
+
+    int collisionState[6];
+    void collisionCallback(const std_msgs::Int16MultiArray& msg) {
+        for (int i = 0 ; i < 6 ; i++) {
+            collisionState[i] = msg.data[i];
+        }
     }
 
     ros::Publisher publisher;
