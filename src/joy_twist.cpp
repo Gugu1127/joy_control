@@ -4,9 +4,9 @@
 #include <sensor_msgs/Joy.h>
 #include <std_msgs/Int16MultiArray.h>
 
+#include <string>
 #include <thread>
 #include <vector>
-#include <string>
 
 using namespace std;
 
@@ -20,7 +20,7 @@ enum Position {
 };
 
 class Trigger {
-   private:
+   protected:
     int previousValue;
 
    public:
@@ -30,8 +30,23 @@ class Trigger {
 
     bool isActive(int currentValue) {
         bool returnValue = false;
-        if (previousValue == 1 && currentValue == 0) {
+        if (previousValue != 0 && currentValue == 0) {
             returnValue = true;
+        }
+
+        previousValue = currentValue;
+        return returnValue;
+    }
+};
+
+class MultiTrigger : public Trigger {
+   public:
+    int isActive(int currentValue) {
+        int returnValue = 0;
+        if (previousValue < 0 && currentValue == 0) {
+            returnValue = -1;
+        } else if (previousValue > 0 && currentValue == 0) {
+            returnValue = 1;
         }
 
         previousValue = currentValue;
@@ -45,6 +60,7 @@ class Argument {
     bool ready;
     vector<pair<float, float> > record;
     Trigger trigger_L_bottom, trigger_R_bottom, trigger_B_bottom;
+    MultiTrigger trigger_horizon_axis, trigger_vertical_axis;
     bool marco_REC;
     bool back;
     Argument() {
@@ -63,7 +79,7 @@ class Car_control {
         gearNum = 5;
     }
 
-    geometry_msgs::Twist control(ros::Publisher publisher, float angular, float vol_forward, float vol_backward, int lb, int rb, int LB, int RB, int B) {
+    geometry_msgs::Twist control(ros::Publisher publisher, float angular, float vol_forward, float vol_backward, int lb, int rb, int LB, int RB, int B, int horizon_axis_index, int vertical_axis_index) {
         geometry_msgs::Twist twist;
         if (lb == 0 && rb == 0) {
             argument.ready = true;
@@ -93,6 +109,9 @@ class Car_control {
         bool L_bottom_state = argument.trigger_L_bottom.isActive(LB);
         bool R_bottom_state = argument.trigger_R_bottom.isActive(RB);
         bool B_bottom_state = argument.trigger_B_bottom.isActive(B);
+        int horizon_axis_state = argument.trigger_horizon_axis.isActive(horizon_axis_index);
+        int vertical_axis_state = argument.trigger_vertical_axis.isActive(vertical_axis_index);
+        
         if (L_bottom_state) {
             if (argument.marco_REC)
                 argument.marco_REC = false;
@@ -132,7 +151,7 @@ int Car_control::gearNum;
 Argument Car_control::argument;
 class Joy_rosky {
    private:
-    int RT_index, LT_index, axis_index, LB_index, RB_index;
+    int RT_index, LT_index, axis_index, LB_index, RB_index, vertical_axis_index, horizon_axis_index;
 
     int L_bottom, R_bottom, B;
 
@@ -149,8 +168,12 @@ class Joy_rosky {
         nodePtr.param<int>("L_bottom", L_bottom, 6);
         nodePtr.param<int>("R_bottom", R_bottom, 7);
         nodePtr.param<int>("B", B, 1);
+        nodePtr.param<int>("horizon_axis_index", horizon_axis_index, 6);
+        nodePtr.param<int>("vertical_axis_index", vertical_axis_index, 7);
+
         // create a publisher that will advertise on the command_velocity topic of the turtle
         publisher = nodePtr.advertise<geometry_msgs::Twist>("/rosky/cmd_vel", 1);
+        publisher_sliding_window = nodePtr.advertise<geometry_msgs::Twist>("/sliding_window/set", 1);
 
         // subscribe to the joystick topic for the input to drive the turtle
         subscriber = nodePtr.subscribe<sensor_msgs::Joy>("joy", 1, &Joy_rosky::joyCallback, this);
@@ -161,16 +184,15 @@ class Joy_rosky {
    private:
     void joyCallback(const sensor_msgs::Joy::ConstPtr& joy) {
         Car_control controller;
-        geometry_msgs::Twist twist = move(controller.control(publisher, joy->axes[axis_index], (-joy->axes[RT_index] + 1) / 2, (-joy->axes[LT_index] + 1) / 2, joy->buttons[LB_index], joy->buttons[RB_index], joy->buttons[L_bottom], joy->buttons[R_bottom], joy->buttons[B]));
+        geometry_msgs::Twist twist = move(controller.control(publisher, joy->axes[axis_index], (-joy->axes[RT_index] + 1) / 2, (-joy->axes[LT_index] + 1) / 2, joy->buttons[LB_index], joy->buttons[RB_index], joy->buttons[L_bottom], joy->buttons[R_bottom], joy->buttons[B], joy->axes[horizon_axis_index], joy->axes[vertical_axis_index]));
         if (twist.linear.x > 0) {
             if (collisionState[top] == 0) {
                 twist.linear.x = 0;
             } else if (collisionState[top] == 2 && twist.linear.x > 0.05) {
                 twist.linear.x = 0.05;
             }
-            
-        }
-        else{
+
+        } else {
             if (collisionState[bottom] == 0) {
                 twist.linear.x = 0;
             } else if (collisionState[bottom] == 2 && twist.linear.x < -0.05) {
@@ -180,27 +202,27 @@ class Joy_rosky {
 
         if (twist.angular.z < 0) {
             if (collisionState[top_R] == 0 || collisionState[bottom_L] == 0) {
-                if(twist.angular.z = 0);
-            } 
-        }
-        else{
+                if (twist.angular.z = 0)
+                    ;
+            }
+        } else {
             if (collisionState[top_L] == 0 || collisionState[bottom_R] == 0) {
                 twist.angular.z = 0;
-            } 
+            }
         }
 
         publisher.publish(twist);
     }
 
-
     int collisionState[6];
     void collisionCallback(const std_msgs::Int16MultiArray& msg) {
-        for (int i = 0 ; i < 6 ; i++) {
+        for (int i = 0; i < 6; i++) {
             collisionState[i] = msg.data[i];
         }
     }
 
     ros::Publisher publisher;
+    ros::Publisher publisher_sliding_window;
     ros::Subscriber subscriber;
     ros::Subscriber subscriber_collision;
 };
