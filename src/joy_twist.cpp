@@ -3,6 +3,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/Joy.h>
 #include <std_msgs/Int16MultiArray.h>
+#include <std_msgs/Int8.h>
 
 #include <string>
 #include <thread>
@@ -57,6 +58,8 @@ class MultiTrigger : public Trigger {
 class Argument {
    public:
     int gear;
+    int window_horizon_num,window_vertical_num;
+
     bool ready;
     vector<pair<float, float> > record;
     Trigger trigger_L_bottom, trigger_R_bottom, trigger_B_bottom;
@@ -64,6 +67,8 @@ class Argument {
     bool marco_REC;
     bool back;
     Argument() {
+        window_horizon_num = 0;
+        window_vertical_num = 0;
         marco_REC = false;
         back = false;
     }
@@ -79,7 +84,7 @@ class Car_control {
         gearNum = 5;
     }
 
-    geometry_msgs::Twist control(ros::Publisher publisher, float angular, float vol_forward, float vol_backward, int lb, int rb, int LB, int RB, int B, int horizon_axis_index, int vertical_axis_index) {
+    geometry_msgs::Twist control(ros::Publisher publisher, ros::Publisher publisher_sliding_window, float angular, float vol_forward, float vol_backward, int lb, int rb, int LB, int RB, int B, int horizon_axis_index, int vertical_axis_index) {
         geometry_msgs::Twist twist;
         if (lb == 0 && rb == 0) {
             argument.ready = true;
@@ -111,7 +116,7 @@ class Car_control {
         bool B_bottom_state = argument.trigger_B_bottom.isActive(B);
         int horizon_axis_state = argument.trigger_horizon_axis.isActive(horizon_axis_index);
         int vertical_axis_state = argument.trigger_vertical_axis.isActive(vertical_axis_index);
-        
+
         if (L_bottom_state) {
             if (argument.marco_REC)
                 argument.marco_REC = false;
@@ -141,7 +146,24 @@ class Car_control {
             if (abs(twist.linear.x) > 0.01 || abs(twist.angular.z) > 0.1)
                 argument.record.push_back(move(pair<float, float>(-twist.linear.x, -twist.angular.z)));
         }
+        if (horizon_axis_state < 0) {
+            argument.window_horizon_num = 10;
+        } else if (horizon_axis_state > 0) {
+            argument.window_horizon_num = -10;
+        } else {
+            argument.window_horizon_num = 0;
+        }
 
+        if (vertical_axis_state > 0) {
+            argument.window_vertical_num = 1;
+        } else if (vertical_axis_state < 0) {
+            argument.window_vertical_num = -1;
+        } else {
+            argument.window_vertical_num = 0;
+        }
+        std_msgs::Int8 window_size;
+        window_size.data = argument.window_vertical_num + argument.window_horizon_num;
+        publisher_sliding_window.publish(window_size);
         return twist;
     }
 };
@@ -173,7 +195,7 @@ class Joy_rosky {
 
         // create a publisher that will advertise on the command_velocity topic of the turtle
         publisher = nodePtr.advertise<geometry_msgs::Twist>("/rosky/cmd_vel", 1);
-        publisher_sliding_window = nodePtr.advertise<geometry_msgs::Twist>("/sliding_window/set", 1);
+        publisher_sliding_window = nodePtr.advertise<std_msgs::Int8>("/sliding_window/set", 1);
 
         // subscribe to the joystick topic for the input to drive the turtle
         subscriber = nodePtr.subscribe<sensor_msgs::Joy>("joy", 1, &Joy_rosky::joyCallback, this);
@@ -184,7 +206,7 @@ class Joy_rosky {
    private:
     void joyCallback(const sensor_msgs::Joy::ConstPtr& joy) {
         Car_control controller;
-        geometry_msgs::Twist twist = move(controller.control(publisher, joy->axes[axis_index], (-joy->axes[RT_index] + 1) / 2, (-joy->axes[LT_index] + 1) / 2, joy->buttons[LB_index], joy->buttons[RB_index], joy->buttons[L_bottom], joy->buttons[R_bottom], joy->buttons[B], joy->axes[horizon_axis_index], joy->axes[vertical_axis_index]));
+        geometry_msgs::Twist twist = move(controller.control(publisher, publisher_sliding_window, joy->axes[axis_index], (-joy->axes[RT_index] + 1) / 2, (-joy->axes[LT_index] + 1) / 2, joy->buttons[LB_index], joy->buttons[RB_index], joy->buttons[L_bottom], joy->buttons[R_bottom], joy->buttons[B], joy->axes[horizon_axis_index], joy->axes[vertical_axis_index]));
         if (twist.linear.x > 0) {
             if (collisionState[top] == 0) {
                 twist.linear.x = 0;
