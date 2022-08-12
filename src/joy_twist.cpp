@@ -17,7 +17,9 @@ enum Position {
     top_L,
     bottom,
     bottom_R,
-    bottom_L
+    bottom_L,
+    top_slow,
+    bottom_slow
 };
 
 class Trigger {
@@ -58,11 +60,11 @@ class MultiTrigger : public Trigger {
 class Argument {
    public:
     int gear;
-    int window_horizon_num,window_vertical_num;
+    int window_horizon_num, window_vertical_num;
 
     bool ready;
     vector<pair<float, float> > record;
-    Trigger trigger_L_bottom, trigger_R_bottom, trigger_B_bottom;
+    Trigger trigger_L_bottom, trigger_R_bottom, trigger_B_bottom,trigger_A_bottom;
     MultiTrigger trigger_horizon_axis, trigger_vertical_axis;
     bool marco_REC;
     bool back;
@@ -80,11 +82,13 @@ class Car_control {
     static int gearNum;
 
    public:
+    static bool active_avoidance;
+
     Car_control() {
         gearNum = 5;
     }
 
-    geometry_msgs::Twist control(ros::Publisher publisher, ros::Publisher publisher_sliding_window, float angular, float vol_forward, float vol_backward, int lb, int rb, int LB, int RB, int B, int horizon_axis_index, int vertical_axis_index) {
+    geometry_msgs::Twist control(ros::Publisher publisher, ros::Publisher publisher_sliding_window, float angular, float vol_forward, float vol_backward, int lb, int rb, int LB, int RB, int B, int A, int horizon_axis_index, int vertical_axis_index) {
         geometry_msgs::Twist twist;
         if (lb == 0 && rb == 0) {
             argument.ready = true;
@@ -114,6 +118,7 @@ class Car_control {
         bool L_bottom_state = argument.trigger_L_bottom.isActive(LB);
         bool R_bottom_state = argument.trigger_R_bottom.isActive(RB);
         bool B_bottom_state = argument.trigger_B_bottom.isActive(B);
+        bool A_bottom_state = argument.trigger_A_bottom.isActive(A);
         int horizon_axis_state = argument.trigger_horizon_axis.isActive(horizon_axis_index);
         int vertical_axis_state = argument.trigger_vertical_axis.isActive(vertical_axis_index);
 
@@ -132,6 +137,10 @@ class Car_control {
             argument.back = true;
         }
 
+        if (A_bottom_state) {
+            active_avoidance = !active_avoidance;
+        }
+
         if (argument.back) {
             if (argument.record.size() > 0) {
                 int index = argument.record.size() - 1;
@@ -146,36 +155,40 @@ class Car_control {
             if (abs(twist.linear.x) > 0.01 || abs(twist.angular.z) > 0.1)
                 argument.record.push_back(move(pair<float, float>(-twist.linear.x, -twist.angular.z)));
         }
-        if (horizon_axis_state < 0) {
-            argument.window_horizon_num = 10;
-        } else if (horizon_axis_state > 0) {
-            argument.window_horizon_num = -10;
-        } else {
-            argument.window_horizon_num = 0;
-        }
 
-        if (vertical_axis_state > 0) {
-            argument.window_vertical_num = 1;
-        } else if (vertical_axis_state < 0) {
-            argument.window_vertical_num = -1;
-        } else {
-            argument.window_vertical_num = 0;
+        if (horizon_axis_state != 0 || vertical_axis_state != 0) {
+            if (horizon_axis_state > 0) {
+                argument.window_horizon_num = -10;
+            } else if (horizon_axis_state < 0) {
+                argument.window_horizon_num = 10;
+            } else {
+                argument.window_horizon_num = 0;
+            }
+
+            if (vertical_axis_state > 0) {
+                argument.window_vertical_num = 1;
+            } else if (vertical_axis_state < 0) {
+                argument.window_vertical_num = -1;
+            } else {
+                argument.window_vertical_num = 0;
+            }
+            std_msgs::Int8 window_size;
+            window_size.data = argument.window_vertical_num + argument.window_horizon_num;
+            publisher_sliding_window.publish(window_size);
         }
-        std_msgs::Int8 window_size;
-        window_size.data = argument.window_vertical_num + argument.window_horizon_num;
-        publisher_sliding_window.publish(window_size);
         return twist;
     }
 };
 
 int Car_control::gearNum;
+bool Car_control::active_avoidance = true;
 
 Argument Car_control::argument;
 class Joy_rosky {
    private:
     int RT_index, LT_index, axis_index, LB_index, RB_index, vertical_axis_index, horizon_axis_index;
 
-    int L_bottom, R_bottom, B;
+    int L_bottom, R_bottom, B, A;
 
     string ifCollision;
 
@@ -190,6 +203,7 @@ class Joy_rosky {
         nodePtr.param<int>("L_bottom", L_bottom, 6);
         nodePtr.param<int>("R_bottom", R_bottom, 7);
         nodePtr.param<int>("B", B, 1);
+        nodePtr.param<int>("A", A, 0);
         nodePtr.param<int>("horizon_axis_index", horizon_axis_index, 6);
         nodePtr.param<int>("vertical_axis_index", vertical_axis_index, 7);
 
@@ -206,39 +220,42 @@ class Joy_rosky {
    private:
     void joyCallback(const sensor_msgs::Joy::ConstPtr& joy) {
         Car_control controller;
-        geometry_msgs::Twist twist = move(controller.control(publisher, publisher_sliding_window, joy->axes[axis_index], (-joy->axes[RT_index] + 1) / 2, (-joy->axes[LT_index] + 1) / 2, joy->buttons[LB_index], joy->buttons[RB_index], joy->buttons[L_bottom], joy->buttons[R_bottom], joy->buttons[B], joy->axes[horizon_axis_index], joy->axes[vertical_axis_index]));
-        if (twist.linear.x > 0) {
-            if (collisionState[top] == 0) {
-                twist.linear.x = 0;
-            } else if (collisionState[top] == 2 && twist.linear.x > 0.05) {
-                twist.linear.x = 0.05;
+        geometry_msgs::Twist twist = move(controller.control(publisher, publisher_sliding_window, joy->axes[axis_index], (-joy->axes[RT_index] + 1) / 2, (-joy->axes[LT_index] + 1) / 2, joy->buttons[LB_index], joy->buttons[RB_index], joy->buttons[L_bottom], joy->buttons[R_bottom], joy->buttons[B], joy->buttons[A], joy->axes[horizon_axis_index], joy->axes[vertical_axis_index]));
+
+        if (Car_control::active_avoidance) {
+            if (twist.linear.x > 0) {
+                if (collisionState[top] == 0) {
+                    twist.linear.x = 0;
+                } else if (collisionState[top_slow] == 0 && twist.linear.x > 0.05) {
+                    twist.linear.x = 0.05;
+                }
+
+            } else {
+                if (collisionState[bottom] == 0) {
+                    twist.linear.x = 0;
+                } else if (collisionState[bottom_slow] == 0 && twist.linear.x < -0.05) {
+                    twist.linear.x = -0.05;
+                }
             }
 
-        } else {
-            if (collisionState[bottom] == 0) {
-                twist.linear.x = 0;
-            } else if (collisionState[bottom] == 2 && twist.linear.x < -0.05) {
-                twist.linear.x = -0.05;
-            }
-        }
-
-        if (twist.angular.z < 0) {
-            if (collisionState[top_R] == 0 || collisionState[bottom_L] == 0) {
-                if (twist.angular.z = 0)
-                    ;
-            }
-        } else {
-            if (collisionState[top_L] == 0 || collisionState[bottom_R] == 0) {
-                twist.angular.z = 0;
+            if (twist.angular.z < 0) {
+                if (collisionState[top_R] == 0 || collisionState[bottom_L] == 0) {
+                    if (twist.angular.z = 0)
+                        ;
+                }
+            } else {
+                if (collisionState[top_L] == 0 || collisionState[bottom_R] == 0) {
+                    twist.angular.z = 0;
+                }
             }
         }
 
         publisher.publish(twist);
     }
 
-    int collisionState[6];
+    int collisionState[8];
     void collisionCallback(const std_msgs::Int16MultiArray& msg) {
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 8; i++) {
             collisionState[i] = msg.data[i];
         }
     }
