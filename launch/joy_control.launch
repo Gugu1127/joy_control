@@ -5,7 +5,7 @@
  <!-- joy node -->
   <node respawn="true" pkg="joy"
         type="joy_node" name="joy_sensor" >
-    <param name="dev" type="string" value="/dev/input/js2" />
+    <param name="dev" type="string" value="/dev/input/js0" />
     <param name="deadzone" value="0.12" />
     <param name="default_trig_val" value="true" />
     <param name="autorepeat_rate" value="1000" />
@@ -13,6 +13,6 @@
 
  <!-- Axes -->
   <node pkg="joy_control" type="joy_twist" name="joy_control_node" output="screen"/>
-
+  <node pkg="ydlidar_noise_filter" type="noise_filter_neighboring_only"  name="noise_filter_neighboring_only" />
   <node pkg="avoidance" type="avoidance" name="avoidance" output="screen"/>
 </launch>
